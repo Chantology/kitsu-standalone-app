@@ -1,5 +1,17 @@
 # Kitsu Standalone App
 
+> ⚠️ **Heavy work in progress — treat this as an early prototype, not a released tool.**
+>
+> It is being built and reshaped in fast iterations against one real Kitsu instance, so:
+> - Layout, wording and workflows change from one build to the next, and nothing here is a settled
+>   design decision yet.
+> - Whole areas are still missing or only half-covered, and there are no automated tests.
+> - It writes to Kitsu for real — publishing a comment, a status change or a revision from this app
+>   is exactly as permanent as doing it in the web UI. Try it on tasks you don't mind touching.
+> - Expect bugs, and expect to fall back to Kitsu's web UI when something isn't supported here.
+>
+> Feedback on what's broken or missing is the point of it existing right now.
+
 A standalone desktop app for [Kitsu](https://kitsu.cg-wire.com/) — log in, pick one of your
 assigned tasks, read its comments, and post a new one — with no DCC (Maya, Nuke, etc.) required.
 
@@ -57,3 +69,9 @@ network too) — copy the `KitsuApp` folder to local disk for normal use.
   the app's own plain settings file and warns once.
 - Attaching a file to a comment publishes it as a Kitsu preview/revision (via `publish_preview`),
   not a plain attachment — matching how Kitsu's own "Publish" action behaves.
+- "Attach URL..." downloads what the address points at and publishes that file: a Kitsu comment
+  carries uploaded files, not links, so there is nothing else a URL could become.
+- "Paint Over..." opens a small markup editor (brush color/size, undo, clear) and attaches the
+  flattened result. It shows up in two places: next to the attached file, and next to every image
+  revision/attachment in the comment history — so feedback on revision N is "select it, draw on
+  it, publish", without a round trip through another application.

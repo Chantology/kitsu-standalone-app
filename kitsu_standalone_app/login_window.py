@@ -131,23 +131,26 @@ class LoginWindow(QWidget):
             self.password_edit.clear()
 
             credentials.save_connection(server_url, email)
-            if not token:
-                # Just logged in with email/password — save the refresh
-                # token gazu obtained so the next launch can skip the
-                # password.
-                refresh_token = session.get_refresh_token()
-                if refresh_token:
-                    used_keyring = credentials.save_refresh_token(
-                        server_url, email, refresh_token
+            # Re-save after EVERY successful login, not just a fresh
+            # password one: gazu's refresh_access_token() (used by
+            # login_with_token, i.e. auto-login) rotates the refresh token
+            # whenever the server returns a new one, invalidating the old
+            # one — only saving after a password login meant the saved
+            # token would silently go stale after the very next auto-login
+            # that happened to get rotated.
+            refresh_token = session.get_refresh_token()
+            if refresh_token:
+                used_keyring = credentials.save_refresh_token(
+                    server_url, email, refresh_token
+                )
+                if not used_keyring:
+                    QMessageBox.warning(
+                        self,
+                        "Kitsu",
+                        "Could not reach the OS keyring — your login "
+                        "was saved in the app's settings file instead "
+                        "of a secure credential store.",
                     )
-                    if not used_keyring:
-                        QMessageBox.warning(
-                            self,
-                            "Kitsu",
-                            "Could not reach the OS keyring — your login "
-                            "was saved in the app's settings file instead "
-                            "of a secure credential store.",
-                        )
 
             display_name = user.get("full_name") or user.get("email") or email
             self._set_status(f"Connected as {display_name} to {session.host}")

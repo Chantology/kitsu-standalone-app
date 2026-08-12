@@ -4,9 +4,10 @@ Ported from the DCC plugins' `KitsuPanel` (see e.g. the Nuke port's
 panel.py, `comments_list`/`comment_detail_area`/`comment_edit` and
 `_load_comments`/`_render_comments`/`_build_comment_item`/
 `_on_comment_selected`/`_on_comment_poll_tick`), with everything tied to a
-DCC viewport/scene dropped: no viewport capture, no drawover/video-frame
-annotation, no "variations" queue. Attaching a file to a published comment
-uses a plain `QFileDialog` instead.
+DCC viewport/scene dropped: no viewport capture, no video-frame annotation,
+no "variations" queue. The file published with a comment comes from a plain
+`QFileDialog`, a URL (see url_attachment), or a paint-over of an image the
+app already has (see paint_over_dialog) instead.
 
 `TaskListWidget`'s leaves are entities, not tasks (the same asset/shot can
 have several tasks — Modeling, Shading, ... — assigned to the same user),
@@ -25,23 +26,41 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
+    QSplitter,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from . import paint_over_dialog, url_attachment
 from .async_worker import run_async
 from .kitsu_core import drafts
 
 _IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp"}
+# Minimum heights for the splitter panes (see _build_*_pane) — just enough to
+# show each section's own label plus its most essential control, so the
+# combined minimum is large enough that a small window scrolls the whole right
+# side (MainWindow's comment_scroll_area) instead of the splitter simply
+# squeezing every pane down to nothing to fit.
+_TASK_INFO_MIN_HEIGHT = 130
+_COMMENTS_MIN_HEIGHT = 120
+_COMMENT_DETAIL_MIN_HEIGHT = 110
+_PUBLISH_MIN_HEIGHT = 220
 _ENTITY_THUMBNAIL_WIDTH = 160
+_PREVIEW_IMAGE_WIDTH = 320
+
+
+def _is_image_path(path):
+    return os.path.splitext(path or "")[1].lstrip(".").lower() in _IMAGE_EXTENSIONS
 
 
 class CommentPanel(QWidget):
@@ -64,8 +83,43 @@ class CommentPanel(QWidget):
         self._comment_poll_timer.timeout.connect(self._on_comment_poll_tick)
         self._comment_poll_timer.start()
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Independently resizable sections (drag the handles between them)
+        # instead of one fixed stack — how much room Task Info vs Comments vs
+        # the selected comment's detail vs Publish gets is a matter of what
+        # the user wants to focus on right now, not something to hardcode.
+        # The comment list and the selected comment's detail (checklist /
+        # revisions / attachments) are deliberately two separate panes rather
+        # than one "Comments" pane, so there's a handle between them: showing
+        # more comments at once and showing more of a big paint-over pull in
+        # opposite directions.
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        outer_layout.addWidget(splitter)
+        self._splitter = splitter
+
+        splitter.addWidget(self._build_task_info_pane())
+        splitter.addWidget(self._build_comments_pane())
+        splitter.addWidget(self._build_comment_detail_pane())
+        splitter.addWidget(self._build_publish_pane())
+        splitter.setSizes([160, 260, 200, 320])
+
+        self.setEnabled(False)
+
+    def _build_task_info_pane(self):
+        pane = QWidget()
+        # A real floor for this pane, not just "shrink to whatever the
+        # splitter feels like" — without it, a QSplitter happily squeezes
+        # every pane down near zero to fit whatever space exists, so the
+        # single scrollbar around the whole panel (see MainWindow's
+        # comment_scroll_area) never actually engages. This is what makes
+        # that outer scrollbar cover Task Info too, not just Comments/Publish.
+        pane.setMinimumHeight(_TASK_INFO_MIN_HEIGHT)
+        layout = QVBoxLayout(pane)
+        layout.setSpacing(8)
+
+        layout.addWidget(self._section_label("Task Info"))
 
         self.entity_header_label = QLabel("")
         self.entity_header_label.setStyleSheet("font-size: 14px; font-weight: bold;")
@@ -79,8 +133,14 @@ class CommentPanel(QWidget):
         task_type_row = QHBoxLayout()
         task_type_row.addWidget(QLabel("Task Type"))
         self.task_type_combo = QComboBox()
+        # AdjustToContents + no stretch factor (see the trailing addStretch
+        # below) so it sizes to its longest item's text instead of
+        # stretching to fill the row — otherwise it turns into a very long,
+        # strange-looking dropdown whenever this panel gets wide.
+        self.task_type_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.task_type_combo.currentIndexChanged.connect(self._on_task_type_changed)
-        task_type_row.addWidget(self.task_type_combo, 1)
+        task_type_row.addWidget(self.task_type_combo)
+        task_type_row.addStretch(1)
         layout.addLayout(task_type_row)
 
         self.latest_version_label = QLabel("")
@@ -91,23 +151,52 @@ class CommentPanel(QWidget):
         self.due_date_label.setVisible(False)
         layout.addWidget(self.due_date_label)
 
+        layout.addStretch(1)
+        return pane
+
+    def _build_comments_pane(self):
+        pane = QWidget()
+        pane.setMinimumHeight(_COMMENTS_MIN_HEIGHT)  # see _build_task_info_pane
+        layout = QVBoxLayout(pane)
+        layout.setSpacing(8)
+
         layout.addWidget(self._section_label("Comments"))
 
         self.comments_list = QListWidget()
         self.comments_list.currentItemChanged.connect(self._on_comment_selected)
-        # Sized to fit its actual rows (see _adjust_comments_list_height)
-        # instead of stretch-filling the panel — an empty/short list
-        # shouldn't reserve as much space as a long one.
-        layout.addWidget(self.comments_list)
+        # Fills whatever space this pane's handle gives it, rather than a
+        # fixed/capped height — dragging the Comments section bigger should
+        # actually show more comments at once.
+        self.comments_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self.comments_list, 1)
+
+        return pane
+
+    def _build_comment_detail_pane(self):
+        """The selected comment's checklist / revisions / attachments — its own
+        splitter pane (hidden until a comment with any of those is selected,
+        which hides its handle with it)."""
+        pane = QWidget()
+        pane.setMinimumHeight(_COMMENT_DETAIL_MIN_HEIGHT)  # see _build_task_info_pane
+        pane.setVisible(False)
+        layout = QVBoxLayout(pane)
+        layout.setSpacing(8)
+        self._detail_pane = pane
 
         self.comment_detail_area = QScrollArea()
         self.comment_detail_area.setWidgetResizable(True)
-        self.comment_detail_area.setVisible(False)
-        self.comment_detail_area.setMaximumHeight(250)
         detail_content = QWidget()
         self.comment_detail_layout = QVBoxLayout(detail_content)
         self.comment_detail_area.setWidget(detail_content)
-        layout.addWidget(self.comment_detail_area)
+        layout.addWidget(self.comment_detail_area, 1)
+
+        return pane
+
+    def _build_publish_pane(self):
+        pane = QWidget()
+        pane.setMinimumHeight(_PUBLISH_MIN_HEIGHT)  # see _build_task_info_pane
+        layout = QVBoxLayout(pane)
+        layout.setSpacing(8)
 
         layout.addWidget(self._section_label("Publish"))
 
@@ -118,25 +207,50 @@ class CommentPanel(QWidget):
         layout.addWidget(self.draft_label)
 
         self.status_combo = QComboBox()
-        layout.addWidget(self.status_combo)
+        # Same reasoning as task_type_combo: size to content, and the
+        # AlignLeft here is what actually stops a QVBoxLayout from
+        # stretching it to the pane's full width.
+        self.status_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        layout.addWidget(self.status_combo, 0, Qt.AlignmentFlag.AlignLeft)
 
         self.comment_edit = QTextEdit()
         self.comment_edit.setPlaceholderText("Write a comment...")
-        self.comment_edit.setFixedHeight(90)
-        layout.addWidget(self.comment_edit)
+        self.comment_edit.setMinimumHeight(60)
+        # Grows with the Publish section's own handle, same reasoning as
+        # comments_list above — more room to focus on writing, on request.
+        layout.addWidget(self.comment_edit, 1)
 
         attachment_row = QHBoxLayout()
         self.attach_button = QPushButton("Attach File...")
         self.attach_button.clicked.connect(self._on_attach_file_clicked)
         attachment_row.addWidget(self.attach_button)
+        self.attach_url_button = QPushButton("Attach URL...")
+        self.attach_url_button.setToolTip(
+            "Download a file from a web address and attach that — Kitsu "
+            "comments can only carry uploaded files, not links."
+        )
+        self.attach_url_button.clicked.connect(self._on_attach_url_clicked)
+        attachment_row.addWidget(self.attach_url_button)
+        attachment_row.addStretch(1)
+        layout.addLayout(attachment_row)
+
+        # Second row so the attached file's name has room to be readable and
+        # the two buttons that only apply to it sit next to it, not next to
+        # the two that pick a file in the first place.
+        attachment_status_row = QHBoxLayout()
         self.attachment_label = QLabel("No file attached")
         self.attachment_label.setStyleSheet("color: #666666;")
-        attachment_row.addWidget(self.attachment_label, 1)
+        attachment_status_row.addWidget(self.attachment_label, 1)
+        self.paint_over_button = QPushButton("Paint Over...")
+        self.paint_over_button.setToolTip("Draw on top of the attached image before publishing it")
+        self.paint_over_button.clicked.connect(self._on_paint_over_attachment_clicked)
+        self.paint_over_button.setVisible(False)
+        attachment_status_row.addWidget(self.paint_over_button)
         self.clear_attachment_button = QPushButton("Clear")
         self.clear_attachment_button.clicked.connect(self._on_clear_attachment_clicked)
         self.clear_attachment_button.setVisible(False)
-        attachment_row.addWidget(self.clear_attachment_button)
-        layout.addLayout(attachment_row)
+        attachment_status_row.addWidget(self.clear_attachment_button)
+        layout.addLayout(attachment_status_row)
 
         version_row = QHBoxLayout()
         version_row.addWidget(QLabel("Version"))
@@ -174,9 +288,7 @@ class CommentPanel(QWidget):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        layout.addStretch(1)
-
-        self.setEnabled(False)
+        return pane
 
     def closeEvent(self, event):
         self.shutdown()
@@ -363,7 +475,7 @@ class CommentPanel(QWidget):
 
     def _load_comments(self):
         self._clear_attachment_preview()
-        self.comment_detail_area.setVisible(False)
+        self._detail_pane.setVisible(False)
         task = self.task
         if task is None:
             self.comments_list.clear()
@@ -414,21 +526,7 @@ class CommentPanel(QWidget):
                 self.comments_list.setCurrentItem(item)
 
         self._last_comment_ids = [comment.get("id") for comment in comments]
-        self._adjust_comments_list_height()
         self._update_latest_version_label(comments)
-
-    _MAX_VISIBLE_COMMENT_ROWS = 6
-
-    def _adjust_comments_list_height(self):
-        # Sized to fit its actual rows (up to a cap) instead of
-        # stretch-filling the panel — an empty/short list shouldn't reserve
-        # as much space as a long one. Past the cap it scrolls internally
-        # rather than growing forever.
-        count = self.comments_list.count()
-        row_height = self.comments_list.sizeHintForRow(0) if count else 22
-        visible_rows = min(count, self._MAX_VISIBLE_COMMENT_ROWS) or 1
-        frame = 2 * self.comments_list.frameWidth()
-        self.comments_list.setFixedHeight(visible_rows * row_height + frame + 4)
 
     def _update_latest_version_label(self, comments):
         revisions = [
@@ -514,7 +612,7 @@ class CommentPanel(QWidget):
     def _on_comment_selected(self, current, _previous):
         self._clear_attachment_preview()
         if current is None:
-            self.comment_detail_area.setVisible(False)
+            self._detail_pane.setVisible(False)
             return
 
         comment = current.data(Qt.UserRole)
@@ -543,7 +641,7 @@ class CommentPanel(QWidget):
                 self.comment_detail_layout.addWidget(self._build_attachment_preview(attachment))
 
         has_content = bool(checklist or previews or attachments)
-        self.comment_detail_area.setVisible(has_content)
+        self._detail_pane.setVisible(has_content)
         if has_content:
             self.comment_detail_layout.addStretch(1)
 
@@ -567,6 +665,44 @@ class CommentPanel(QWidget):
         label.setWordWrap(True)
         return label
 
+    def _build_image_preview(self, local_path, file_name, caption=None):
+        """An image from the comment history, with the Paint Over button that
+        turns it into the next comment's attachment."""
+        pixmap = QPixmap(local_path)
+        if pixmap.isNull():
+            return None
+
+        container = QWidget()
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+
+        if caption:
+            container_layout.addWidget(QLabel(caption))
+
+        image_label = QLabel()
+        image_label.setPixmap(
+            pixmap.scaledToWidth(_PREVIEW_IMAGE_WIDTH, Qt.SmoothTransformation)
+            if pixmap.width() > _PREVIEW_IMAGE_WIDTH
+            else pixmap
+        )
+        image_label.setToolTip(file_name)
+        container_layout.addWidget(image_label)
+
+        button_row = QHBoxLayout()
+        paint_over_button = QPushButton("Paint Over...")
+        paint_over_button.setToolTip(
+            "Draw notes on top of this image — the markup becomes the file "
+            "attached under Publish, ready to post as feedback."
+        )
+        paint_over_button.clicked.connect(
+            lambda _checked=False, path=local_path: self._on_paint_over_existing_clicked(path)
+        )
+        button_row.addWidget(paint_over_button)
+        button_row.addStretch(1)
+        container_layout.addLayout(button_row)
+
+        return container
+
     def _build_attachment_preview(self, attachment):
         file_name = attachment.get("name") or str(attachment.get("id"))
         extension = (attachment.get("extension") or os.path.splitext(file_name)[1].lstrip(".")).lower()
@@ -577,16 +713,9 @@ class CommentPanel(QWidget):
             return self._wrapped_label(f"{file_name}: could not download ({exc})")
 
         if extension in _IMAGE_EXTENSIONS:
-            pixmap = QPixmap(local_path)
-            if not pixmap.isNull():
-                label = QLabel()
-                label.setPixmap(
-                    pixmap.scaledToWidth(320, Qt.SmoothTransformation)
-                    if pixmap.width() > 320
-                    else pixmap
-                )
-                label.setToolTip(file_name)
-                return label
+            preview = self._build_image_preview(local_path, file_name)
+            if preview is not None:
+                return preview
 
         return self._wrapped_label(f"{file_name} (no preview available for this file type)")
 
@@ -603,21 +732,10 @@ class CommentPanel(QWidget):
         except Exception as exc:
             return self._wrapped_label(f"Revision {revision}: could not download ({exc})")
 
-        pixmap = QPixmap(local_path)
-        if pixmap.isNull():
+        preview = self._build_image_preview(local_path, file_name, caption=f"Revision {revision}")
+        if preview is None:
             return self._wrapped_label(f"Revision {revision} (no preview available for this file type)")
-
-        container = QWidget()
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.addWidget(QLabel(f"Revision {revision}"))
-        image_label = QLabel()
-        image_label.setPixmap(
-            pixmap.scaledToWidth(320, Qt.SmoothTransformation) if pixmap.width() > 320 else pixmap
-        )
-        image_label.setToolTip(file_name)
-        container_layout.addWidget(image_label)
-        return container
+        return preview
 
     def _ensure_preview_downloaded(self, preview):
         preview_id = preview.get("id")
@@ -661,15 +779,66 @@ class CommentPanel(QWidget):
         self.attachment_label.setText("No file attached")
         self.attachment_label.setStyleSheet("color: #666666;")
         self.clear_attachment_button.setVisible(False)
+        self.paint_over_button.setVisible(False)
+
+    def _set_pending_attachment(self, file_path):
+        """The single place the file-to-publish is set, whoever picked it —
+        file dialog, URL download, or a paint-over."""
+        self._pending_attachment_path = file_path
+        self.attachment_label.setText(os.path.basename(file_path))
+        self.attachment_label.setStyleSheet("")  # back to the theme's normal text color, not a hardcoded one
+        self.clear_attachment_button.setVisible(True)
+        self.paint_over_button.setVisible(_is_image_path(file_path))
 
     def _on_attach_file_clicked(self):
         file_path, _filter = QFileDialog.getOpenFileName(self, "Attach File")
         if not file_path:
             return
-        self._pending_attachment_path = file_path
-        self.attachment_label.setText(os.path.basename(file_path))
-        self.attachment_label.setStyleSheet("")  # back to the theme's normal text color, not a hardcoded one
-        self.clear_attachment_button.setVisible(True)
+        self._set_pending_attachment(file_path)
+
+    def _on_attach_url_clicked(self):
+        url, accepted = QInputDialog.getText(
+            self, "Attach from URL", "Image or file URL (http:// or https://):"
+        )
+        url = (url or "").strip()
+        if not accepted or not url:
+            return
+
+        self.attach_url_button.setEnabled(False)
+        self._set_status("Downloading...")
+
+        def work():
+            return url_attachment.download_to_temp(url)
+
+        def on_done(file_path):
+            self.attach_url_button.setEnabled(True)
+            self._set_pending_attachment(file_path)
+            self._set_status(f"Attached {os.path.basename(file_path)} from URL.")
+
+        def on_error(exc):
+            self.attach_url_button.setEnabled(True)
+            self._set_status(f"Could not download {url}: {exc}", is_error=True)
+
+        run_async(self, work, on_done, on_error)
+
+    def _on_paint_over_attachment_clicked(self):
+        if not self._pending_attachment_path:
+            return
+        result_path = paint_over_dialog.paint_over(self._pending_attachment_path, self)
+        if not result_path:
+            return
+        self._set_pending_attachment(result_path)
+        self._set_status("Markup attached — Publish to post it.")
+
+    def _on_paint_over_existing_clicked(self, image_path):
+        """Paint over a revision/attachment from the comment history and queue
+        the markup as the file to publish — the supervisor's round trip
+        (look at revision N, draw on it, send it back) without leaving the app."""
+        result_path = paint_over_dialog.paint_over(image_path, self)
+        if not result_path:
+            return
+        self._set_pending_attachment(result_path)
+        self._set_status("Markup attached below — add a comment and Publish it as feedback.")
 
     def _on_clear_attachment_clicked(self):
         self._pending_attachment_path = None

@@ -81,6 +81,7 @@ class ProjectInfoWidget(QWidget):
         self.session = session
 
     def set_project(self, project):
+        self.name_label.setStyleSheet("font-size: 16px; font-weight: bold;")
         self.name_label.setText(project.get("name") or "?")
         self.thumbnail_label.setVisible(False)
         self._load_thumbnail(project)
@@ -93,6 +94,23 @@ class ProjectInfoWidget(QWidget):
             if not value:  # None, "", or 0 — nothing entered, so skip the row entirely
                 continue
             self.form_layout.addRow(f"{label}:", QLabel(str(value)))
+
+    def show_no_tasks_message(self):
+        """Called when the logged-in user has no assigned tasks in any
+        project — without this, the tab would just be a blank, unexplained
+        screen (see the "new test user, sees nothing" report this was
+        added for) instead of saying why."""
+        self.thumbnail_label.setVisible(False)
+        while self.form_layout.rowCount():
+            self.form_layout.removeRow(0)
+        self.name_label.setStyleSheet("font-size: 14px; font-weight: normal; color: #888888;")
+        self.name_label.setText(
+            "No tasks are currently assigned to you in Kitsu.\n\n"
+            "This app only shows projects/assets/shots you have at least one "
+            "task assigned to — being added to a project's team isn't "
+            "enough on its own. Ask whoever manages the project to assign "
+            "you a task, then log out and back in (or restart the app)."
+        )
 
     def _load_thumbnail(self, project):
         if not project.get("has_avatar"):

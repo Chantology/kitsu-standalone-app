@@ -143,6 +143,15 @@ class KitsuSession:
         across all of their projects — the source for the task picker."""
         return gazu.user.all_tasks_to_do(client=self.client)
 
+    def all_tasks_requiring_feedback(self):
+        """Kitsu's "My Checks" — tasks pending this person's review/approval
+        (e.g. a supervisor or production manager's queue), regardless of
+        whether they're the assigned artist. Same denormalized task shape
+        as all_tasks_to_do (both are Zou's own task listing endpoints,
+        just filtered differently), and empty for anyone with no review
+        responsibilities — no role check needed on this end."""
+        return gazu.user.all_tasks_requiring_feedback(client=self.client)
+
     def all_task_statuses_for_project(self, project):
         return gazu.task.all_task_statuses_for_project(project, client=self.client)
 

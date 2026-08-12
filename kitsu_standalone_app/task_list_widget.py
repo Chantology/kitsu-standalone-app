@@ -28,6 +28,14 @@ whole tree's population on it. Clicking a task row emits
 `entity_selected(entity_tasks, clicked_task)` — the full sibling list (so
 CommentPanel's Task Type dropdown can still switch between them) plus
 which one was actually clicked (so that's the one preselected).
+
+Beyond a person's own assigned tasks (`all_tasks_to_do`), this also pulls
+in Kitsu's "My Checks" (`all_tasks_requiring_feedback`) — tasks pending
+this person's review (a supervisor/production manager role) even when
+they're not the assigned artist. The two lists are merged and deduped by
+task id; a task that's only there because it needs this person's review
+(not also assigned to them) gets a "(Review)" marker in the Task Type
+column so it's clear why it showed up.
 """
 
 from PySide6.QtCore import Qt, Signal
@@ -39,12 +47,32 @@ from .project_info_widget import ProjectInfoWidget
 from .status_colors import status_display_color
 
 _NAME_COLUMN_WIDTH = 180
-_TASK_TYPE_COLUMN_WIDTH = 130
+_TASK_TYPE_COLUMN_WIDTH = 150
 _VERSION_COLUMN_WIDTH = 60
 # Status trails each row and stays a small fixed-width badge rather than
 # stretching into a colored bar as the window resizes.
 _STATUS_COLUMN_WIDTH = 90
 _UNKNOWN_PRIORITY = 999
+
+
+def _merge_task_lists(assigned_tasks, check_tasks):
+    """Combines "my tasks" and "my checks", deduped by task id — a task
+    already present because it's assigned to this person takes priority
+    over the same task also appearing in their checks queue (rare, but
+    possible if they're both the artist and the reviewer)."""
+    merged = []
+    seen_ids = set()
+    for task in assigned_tasks:
+        task["_is_check_only"] = False
+        merged.append(task)
+        seen_ids.add(task.get("id"))
+    for task in check_tasks:
+        if task.get("id") in seen_ids:
+            continue
+        task["_is_check_only"] = True
+        merged.append(task)
+        seen_ids.add(task.get("id"))
+    return merged
 
 
 class TaskListWidget(QWidget):
@@ -99,7 +127,9 @@ class TaskListWidget(QWidget):
         self.project_info.set_session(session)
 
         def work():
-            return session.all_tasks_to_do()
+            assigned_tasks = session.all_tasks_to_do()
+            check_tasks = session.all_tasks_requiring_feedback()
+            return _merge_task_lists(assigned_tasks, check_tasks)
 
         def on_done(tasks):
             self._all_tasks = tasks
@@ -131,6 +161,7 @@ class TaskListWidget(QWidget):
             self._active_project_id = None
             self._populate_tree(self.assets_tree, [], {}, group_field="entity_type_name", group_fallback="(no asset type)")
             self._populate_tree(self.shots_tree, [], {}, group_field="sequence_name", group_fallback="(no sequence)")
+            self.project_info.show_no_tasks_message()
 
     def _on_project_combo_changed(self, index):
         if index < 0:
@@ -223,7 +254,13 @@ class TaskListWidget(QWidget):
 
     def _add_task_item(self, parent_item, entity_tasks, task):
         status_text = (task.get("task_status_short_name") or task.get("task_status_name") or "?").upper()
-        task_item = QTreeWidgetItem(["", task.get("task_type_name") or "?", "", status_text])
+        type_text = task.get("task_type_name") or "?"
+        if task.get("_is_check_only"):
+            # Not assigned to this person — it's here because it's pending
+            # their review (Kitsu's "My Checks"), which is worth surfacing
+            # rather than looking identical to an assigned task.
+            type_text += " (Review)"
+        task_item = QTreeWidgetItem(["", type_text, "", status_text])
         task_item.setData(0, Qt.UserRole, (entity_tasks, task))
         task_item.setTextAlignment(2, Qt.AlignCenter)
 

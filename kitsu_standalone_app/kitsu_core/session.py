@@ -152,16 +152,57 @@ class KitsuSession:
         responsibilities — no role check needed on this end."""
         return gazu.user.all_tasks_requiring_feedback(client=self.client)
 
+    def all_open_projects(self):
+        """Every project the logged-in user is on the team of (an admin gets
+        all of them). Deliberately not derived from their own task list: a
+        supervisor or production manager can have no task assigned in a
+        project they still need to open."""
+        return gazu.project.all_open_projects(client=self.client)
+
+    def all_assets_for_project(self, project):
+        return gazu.asset.all_assets_for_project(project, client=self.client)
+
+    def all_shots_for_project(self, project):
+        return gazu.shot.all_shots_for_project(project, client=self.client)
+
+    def all_sequences_for_project(self, project):
+        return gazu.shot.all_sequences_for_project(project, client=self.client)
+
+    def all_episodes_for_project(self, project):
+        """Empty for a project that has no episodes (a film or commercial
+        rather than a series) — Zou answers that with an error rather than an
+        empty list, which is nothing a caller needs to hear about."""
+        try:
+            return gazu.shot.all_episodes_for_project(project, client=self.client)
+        except Exception:
+            return []
+
+    def all_asset_types_for_project(self, project):
+        return gazu.asset.all_asset_types_for_project(project, client=self.client)
+
+    def all_tasks_for_project(self, project):
+        """Every task in the project, whoever it belongs to and whatever its
+        status — unlike all_tasks_to_do/all_tasks_requiring_feedback, which
+        only ever return the logged-in user's own slice of that."""
+        return gazu.task.all_tasks_for_project(project, client=self.client)
+
+    def all_preview_files_for_project(self, project):
+        """Every published preview in the project in one request — the cheap
+        way to find each task's latest revision number, which the task
+        payload itself doesn't carry (it only has last_preview_file_id)."""
+        return gazu.task.all_preview_files_for_project(project, client=self.client)
+
     def all_task_statuses_for_project(self, project):
+        """A project's *configured* status list — not necessarily every status
+        its tasks actually use (see kitsu_core.project_tasks)."""
         return gazu.task.all_task_statuses_for_project(project, client=self.client)
 
     def all_task_types_for_project(self, project):
         return gazu.task.all_task_types_for_project(project, client=self.client)
 
     def all_task_statuses(self):
-        """Every task status in the database, not just the ones a
-        project's own settings list — used as a fallback when a project's
-        own status list can't be fetched."""
+        """Every task status in the database, not just the ones a project's
+        own settings list."""
         return gazu.task.all_task_statuses(client=self.client)
 
     def all_comments_for_task(self, task):

@@ -19,7 +19,7 @@ selected entity's tasks a comment/preview is posted to; everything below it
 import os
 import tempfile
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 
 from . import paint_over_dialog, url_attachment
 from .async_worker import run_async
-from .kitsu_core import drafts
+from .kitsu_core import drafts, project_tasks
 
 _IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp"}
 # Minimum heights for the splitter panes (see _build_*_pane) — just enough to
@@ -64,6 +64,10 @@ def _is_image_path(path):
 
 
 class CommentPanel(QWidget):
+    # Publishing changes the task's status server-side, so the task list has
+    # to re-read it or it keeps showing the status this panel just replaced.
+    published = Signal()
+
     def __init__(self, session, parent=None):
         super().__init__(parent)
         self.session = session
@@ -442,12 +446,12 @@ class CommentPanel(QWidget):
         project_id = task.get("project_id")
 
         def work():
-            if project_id:
-                try:
-                    return self.session.all_task_statuses_for_project(project_id)
-                except Exception:
-                    pass  # fall through to the global list below
-            return self.session.all_task_statuses()
+            # Not just the project's configured status list: it can be missing
+            # the task's own current status, in which case this combo used to
+            # sit silently on its first entry — so publishing a comment on a
+            # "Todo" task would have set it to "Approved". See
+            # project_tasks.statuses_for_task.
+            return project_tasks.statuses_for_task(self.session, project_id, task)
 
         def on_done(statuses):
             if task is not self.task:
@@ -887,6 +891,7 @@ class CommentPanel(QWidget):
                 self.draft_label.setVisible(False)
                 self.discard_draft_button.setVisible(False)
                 self._load_comments()
+            self.published.emit()
 
         def on_error(exc):
             self.post_button.setEnabled(True)

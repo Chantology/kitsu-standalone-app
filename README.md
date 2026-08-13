@@ -64,6 +64,18 @@ network too) — copy the `KitsuApp` folder to local disk for normal use.
 
 ## Notes
 
+- The Assets/Shots tabs show the **whole project** — every asset and shot, with every task on it,
+  whoever it belongs to — not just the logged-in user's own work. Two filters narrow it: one to
+  "My tasks" (assigned to you, also shown in bold) or "My checks" (waiting on your review, marked
+  `(Review)`), and one to a single task type. The task-type list holds only the types actually in
+  use on the current tab, and is remembered per tab — Modeling/Shading are asset task types while
+  Animation/Comp are shot ones, so a shared selection would only ever empty the other tab.
+  Canceled shots/assets are listed and marked, not hidden.
+- Nothing polls the task list, so use **Refresh** after changing things in the web UI. Publishing
+  from this app refreshes it automatically, since that changes a status.
+- The Version column fills in a moment after the trees appear: a project's preview files are by far
+  the slowest thing to fetch (~13s for 7000 of them on one real project), so the trees are shown
+  first and the versions land when they land.
 - The saved login (refresh token) is stored in the OS keyring (Windows Credential Manager / Linux
   Secret Service) via the `keyring` package. If no keyring backend is available, it falls back to
   the app's own plain settings file and warns once.

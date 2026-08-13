@@ -49,6 +49,7 @@ class MainWindow(QMainWindow):
         self.news_feed.set_session(session)
 
         self.comment_panel = CommentPanel(session)
+        self.comment_panel.published.connect(self.task_list.refresh_active_project)
         # The right side can hold a lot (comments, checklist/preview
         # thumbnails, the compose form) — scrollable as a unit so none of
         # it gets clipped on a shorter window.

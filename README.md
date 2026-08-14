@@ -76,14 +76,39 @@ network too) — copy the `KitsuApp` folder to local disk for normal use.
 - The Version column fills in a moment after the trees appear: a project's preview files are by far
   the slowest thing to fetch (~13s for 7000 of them on one real project), so the trees are shown
   first and the versions land when they land.
+- A server URL without a scheme becomes `https://`. `http://` still works for an internal server,
+  but asks for confirmation first, since the password would cross the network unencrypted.
+- Downloaded media (previews, attachments, frame strips, movies) is cached under the OS temp
+  directory. It's pruned after 7 days at startup and cleared completely on log out — see
+  [media_cache.py](kitsu-standalone-app/kitsu_standalone_app/kitsu_core/media_cache.py). Fetching a
+  frame refuses revisions over 2 GB.
+- Comment text and links written by other people are shown read-only, and a clicked link is only
+  opened if it's `http`/`https` — a link's label needn't match where it points.
 - The saved login (refresh token) is stored in the OS keyring (Windows Credential Manager / Linux
   Secret Service) via the `keyring` package. If no keyring backend is available, it falls back to
   the app's own plain settings file and warns once.
-- Attaching a file to a comment publishes it as a Kitsu preview/revision (via `publish_preview`),
-  not a plain attachment — matching how Kitsu's own "Publish" action behaves.
-- "Attach URL..." downloads what the address points at and publishes that file: a Kitsu comment
-  carries uploaded files, not links, so there is nothing else a URL could become.
-- "Paint Over..." opens a small markup editor (brush color/size, undo, clear) and attaches the
-  flattened result. It shows up in two places: next to the attached file, and next to every image
-  revision/attachment in the comment history — so feedback on revision N is "select it, draw on
-  it, publish", without a round trip through another application.
+- The composer mirrors Kitsu's own two forms. **Post Comment** carries text, a checklist, file
+  attachments and URL links; **Publish Revision** carries the same plus the preview file itself, a
+  version number and "set as the asset/shot thumbnail". Both can be marked *Visible to clients*
+  (Kitsu's `for_client`, which only managers may set — off means internal to the production team).
+- Comment text is markdown, the way Kitsu treats it: the toolbar wraps selections in `**bold**`,
+  `*italic*`, `- bullets` or `` `code` ``, there's an emoji picker, and selecting a comment shows it
+  rendered underneath the list. Rendering uses Qt's own `setMarkdown` — no extra dependency.
+- Links are stored on the comment by Kitsu. Attaching **from a URL** is a different thing: Kitsu only
+  stores uploaded files, so the file is downloaded here first and then uploaded (that is also what
+  gazu's own `preview_file_url` does internally — the server never fetches the URL).
+- "Paint Over..." opens a small markup editor (brush color/size, undo, clear). On a revision it
+  offers two things: **Save Annotation**, which stores the markup on that revision the way Kitsu's
+  own review player does (no new version), or **Attach as File**, which flattens it into an image for
+  the composer. On a plain attachment or a file you picked yourself, only the flattened option
+  applies.
+- **Video revisions** work too: "Fetch Media & Paint Over" pulls Kitsu's frame strip (every frame of
+  the clip as a 178x100 thumbnail, one request), you scrub to the frame you want, and the app then
+  decodes *that* frame from the movie at full resolution to draw on. The movie is downloaded once and
+  cached. A just-published revision has no frame strip until Kitsu finishes processing it, and the app
+  says so rather than showing a server error.
+- Annotations are written in the preview's own pixel coordinates with that size recorded as the
+  fabric.js canvas size, which is how Kitsu rescales them to whatever it renders at. The frame number
+  follows Kitsu's own convention, `floor(time * fps) + 1`.
+- Drafts save everything the composer holds (text, status, checklist, links, attachments, flags), not
+  just the text.

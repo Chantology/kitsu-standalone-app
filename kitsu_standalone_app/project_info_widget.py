@@ -16,13 +16,13 @@ this form.
 """
 
 import os
-import tempfile
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFormLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from .async_worker import run_async
+from .kitsu_core import media_cache
 
 _THUMBNAIL_WIDTH = 240
 
@@ -115,8 +115,7 @@ class ProjectInfoWidget(QWidget):
             return
 
         def work():
-            cache_dir = os.path.join(tempfile.gettempdir(), "kitsu_standalone_previews")
-            os.makedirs(cache_dir, exist_ok=True)
+            cache_dir = media_cache.ensure_directory(media_cache.PREVIEWS)
             target_path = os.path.join(cache_dir, f"{project['id']}_project_thumb.png")
             self.session.download_project_thumbnail(project, target_path)
             return target_path

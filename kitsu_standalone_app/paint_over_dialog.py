@@ -13,7 +13,6 @@ neither degrades the original nor bakes in the on-screen zoom factor.
 """
 
 import os
-import tempfile
 
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
@@ -30,6 +29,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from .kitsu_core import media_cache
 
 # The canvas is shown at most this big (bigger images are scaled down to fit
 # on screen); the overlay strokes are still recorded at full resolution.
@@ -57,6 +58,11 @@ class _PaintCanvas(QWidget):
         self._overlay.fill(Qt.transparent)
         self._undo_stack = []
         self._last_point = None
+        # Strokes are kept as geometry as well as pixels: the pixels make the
+        # flattened image, the geometry becomes a real Kitsu annotation (see
+        # kitsu_core.annotations). Both are in the image's own coordinates.
+        self.strokes = []
+        self._current_stroke = None
 
         self.pen_color = QColor(_PRESET_COLORS[0][1])
         self.pen_width = 5
@@ -113,6 +119,12 @@ class _PaintCanvas(QWidget):
             return
         self._push_undo()
         self._last_point = self._to_image(event.position())
+        self._current_stroke = {
+            "points": [(self._last_point.x(), self._last_point.y())],
+            "color": self.pen_color.name(),
+            "width": self.pen_width,
+        }
+        self.strokes.append(self._current_stroke)
         self._draw(self._last_point, self._last_point)
 
     def mouseMoveEvent(self, event):
@@ -120,32 +132,44 @@ class _PaintCanvas(QWidget):
             return
         point = self._to_image(event.position())
         self._draw(self._last_point, point)
+        if self._current_stroke is not None:
+            self._current_stroke["points"].append((point.x(), point.y()))
         self._last_point = point
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._last_point = None
+            self._current_stroke = None
 
     # ---- history ----
 
     def _push_undo(self):
-        self._undo_stack.append(self._overlay.copy())
+        # Snapshot the stroke list, not just its length: Clear replaces the list
+        # wholesale, and a length would then restore nothing.
+        self._undo_stack.append((self._overlay.copy(), list(self.strokes)))
         if len(self._undo_stack) > _UNDO_LIMIT:
             self._undo_stack.pop(0)
 
     def undo(self):
         if not self._undo_stack:
             return
-        self._overlay = self._undo_stack.pop()
+        overlay, strokes = self._undo_stack.pop()
+        self._overlay = overlay
+        self.strokes = strokes
         self.update()
 
     def clear(self):
         self._push_undo()
         self._overlay.fill(Qt.transparent)
+        self.strokes = []
         self.update()
 
     def is_empty(self):
         return not self._undo_stack
+
+    def image_size(self):
+        """The coordinate space the strokes are recorded in."""
+        return self._base.width(), self._base.height()
 
     def flattened(self):
         """The image with the strokes baked in, at full resolution."""
@@ -157,11 +181,21 @@ class _PaintCanvas(QWidget):
 
 
 class PaintOverDialog(QDialog):
-    def __init__(self, pixmap, source_name, parent=None):
+    """`allow_annotation` adds the second accept button: markup can either go
+    back to Kitsu as a real annotation on the revision it was drawn on (see
+    kitsu_core.annotations), or be flattened into a file to attach/publish.
+    Which one was pressed is in `result_action`."""
+
+    ACTION_ANNOTATE = "annotate"
+    ACTION_FILE = "file"
+
+    def __init__(self, pixmap, source_name, parent=None, allow_annotation=False):
         super().__init__(parent)
         self.setWindowTitle(f"Paint Over — {source_name}")
         self._source_name = source_name
         self.saved_path = None
+        self.result_action = None
+        self._allow_annotation = allow_annotation
 
         layout = QVBoxLayout(self)
 
@@ -203,11 +237,27 @@ class PaintOverDialog(QDialog):
         scroll_area.setAlignment(Qt.AlignCenter)
         layout.addWidget(scroll_area, 1)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
         buttons.rejected.connect(self.reject)
+        if self._allow_annotation:
+            annotate_button = buttons.addButton(
+                "Save Annotation", QDialogButtonBox.ButtonRole.AcceptRole
+            )
+            annotate_button.setToolTip(
+                "Store the markup on this revision in Kitsu, where its own "
+                "review player shows it — no new version is created."
+            )
+            annotate_button.clicked.connect(lambda: self._accept_with(self.ACTION_ANNOTATE))
+        file_button = buttons.addButton(
+            "Attach as File" if self._allow_annotation else "Save",
+            QDialogButtonBox.ButtonRole.AcceptRole,
+        )
+        if self._allow_annotation:
+            file_button.setToolTip(
+                "Flatten the markup into an image instead, ready to attach to a "
+                "comment or publish as a new revision."
+            )
+        file_button.clicked.connect(lambda: self._accept_with(self.ACTION_FILE))
         layout.addWidget(buttons)
 
         self._select_color(0)
@@ -246,22 +296,30 @@ class PaintOverDialog(QDialog):
     def _on_width_changed(self, value):
         self.canvas.pen_width = value
 
-    def accept(self):
+    def _accept_with(self, action):
         if self.canvas.is_empty():
             QMessageBox.information(
                 self, "Paint Over", "Nothing drawn yet — draw on the image, or Cancel."
             )
             return
-        try:
-            self.saved_path = self._save_flattened()
-        except Exception as exc:
-            QMessageBox.warning(self, "Paint Over", f"Could not save the markup: {exc}")
-            return
-        super().accept()
+        if action == self.ACTION_FILE:
+            try:
+                self.saved_path = self._save_flattened()
+            except Exception as exc:
+                QMessageBox.warning(self, "Paint Over", f"Could not save the markup: {exc}")
+                return
+        self.result_action = action
+        self.accept()
+
+    def strokes(self):
+        """The markup as geometry in the image's own pixel coordinates."""
+        return self.canvas.strokes
+
+    def image_size(self):
+        return self.canvas.image_size()
 
     def _save_flattened(self):
-        cache_dir = os.path.join(tempfile.gettempdir(), "kitsu_standalone_paintovers")
-        os.makedirs(cache_dir, exist_ok=True)
+        cache_dir = media_cache.ensure_directory(media_cache.PAINT_OVERS)
 
         stem = os.path.splitext(os.path.basename(self._source_name))[0] or "markup"
         # Never overwrite an earlier markup of the same source — someone may
@@ -293,3 +351,14 @@ def paint_over(image_path, parent=None):
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return None
     return dialog.saved_path
+
+
+def paint_over_media(pixmap, source_name, parent=None):
+    """Paint over media fetched from Kitsu, where the markup can become a real
+    annotation on the revision. Returns the accepted dialog (read its
+    `result_action`, `strokes()`, `image_size()` and `saved_path`), or None if
+    the user cancelled."""
+    dialog = PaintOverDialog(pixmap, source_name, parent, allow_annotation=True)
+    if dialog.exec() != QDialog.DialogCode.Accepted:
+        return None
+    return dialog

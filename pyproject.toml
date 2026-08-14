@@ -8,6 +8,11 @@ dependencies = [
     "requests>=2.32.0",
     "PySide6>=6.6",
     "keyring>=24.0",
+    # Decodes one frame out of a movie revision so it can be drawn on. Its wheel
+    # bundles ffmpeg (~28 MB), which is why nothing has to be installed
+    # alongside the app. See movie_frames.py for why Qt's own multimedia stack
+    # wasn't good enough for this.
+    "av>=12.0",
 ]
 
 [project.optional-dependencies]

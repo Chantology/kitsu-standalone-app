@@ -7,6 +7,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from . import theme
+from .kitsu_core import media_cache
 from .login_window import LoginWindow
 from .main_window import MainWindow
 from .resources import resource_path
@@ -16,6 +17,11 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Kitsu")
     app.setOrganizationName("Kitsu")
+    # Downloaded previews, movies and frame strips are production media sitting
+    # in the temp directory. Anything still wanted is re-fetched on demand, so
+    # week-old files are dropped at startup rather than kept indefinitely (see
+    # kitsu_core.media_cache; logging out clears the lot).
+    media_cache.prune_old()
     # Sets the default icon for every window/dialog in the app (title bar,
     # taskbar/Alt-Tab) — a window only needs its own setWindowIcon() if it
     # wants to override this.

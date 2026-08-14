@@ -12,10 +12,11 @@ is plain blocking code with no Qt involvement.
 
 import os
 import re
-import tempfile
 from urllib.parse import unquote, urlparse
 
 import requests
+
+from .kitsu_core import media_cache
 
 _CHUNK_BYTES = 64 * 1024
 # A sanity ceiling, not a Kitsu limit: mistyping a URL shouldn't quietly pull
@@ -46,8 +47,7 @@ def download_to_temp(url, timeout=30):
     if not parsed.netloc:
         raise ValueError(f"{url} is not a complete URL.")
 
-    cache_dir = os.path.join(tempfile.gettempdir(), "kitsu_standalone_url_attachments")
-    os.makedirs(cache_dir, exist_ok=True)
+    cache_dir = media_cache.ensure_directory(media_cache.URL_ATTACHMENTS)
 
     with requests.get(url, stream=True, timeout=timeout) as response:
         response.raise_for_status()

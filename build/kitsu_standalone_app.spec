@@ -27,7 +27,11 @@ a = Analysis(
     # platform backend (Windows Credential Manager / SecretService) is
     # bundled, not just whatever keyring happens to import first at
     # analysis time.
-    hiddenimports=["keyring.backends"],
+    #
+    # av (PyAV, which decodes movie revisions — see movie_frames.py) is imported
+    # lazily so the app still starts where it isn't available, which also hides
+    # it from the import scan.
+    hiddenimports=["keyring.backends", "av"],
     hookspath=[],
     runtime_hooks=[],
     excludes=[],

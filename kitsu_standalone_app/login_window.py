@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from .async_worker import run_async
 from .kitsu_core import credentials
+from .kitsu_core import session as session_module
 from .kitsu_core.session import KitsuConnectionError, KitsuSession
 
 
@@ -81,6 +82,18 @@ class LoginWindow(QWidget):
                 connection.server_url, connection.email
             )
             if token_result.token:
+                if not token_result.used_keyring:
+                    # Warned every time it's *used*, not just once when it was
+                    # saved: this token is long-lived and sitting in plain text
+                    # where anything running as this user can read it, so the
+                    # one-off warning at save time was too easy to miss.
+                    QMessageBox.warning(
+                        self,
+                        "Kitsu",
+                        "Your saved login is stored in plain text, because this "
+                        "machine has no OS keyring available. Anything running "
+                        "as you can read it. Use Log Out to remove it.",
+                    )
                 self._set_status("Saved login found — signing in...")
                 self._attempt_login(
                     connection.server_url, connection.email, None, token_result.token
@@ -106,6 +119,21 @@ class LoginWindow(QWidget):
         if not password:
             QMessageBox.warning(self, "Kitsu", "Please enter your password.")
             return
+        if session_module.is_insecure_host(server_url):
+            # Allowed, because an internal Kitsu may genuinely be served over
+            # http — but not silently, since the password goes over the wire in
+            # the clear.
+            answer = QMessageBox.warning(
+                self,
+                "Kitsu",
+                f"{server_url} is not encrypted (http://), so your password and "
+                "saved login would be sent in plain text over the network.\n\n"
+                "Continue anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
 
         self._attempt_login(server_url, email, password, None)
 

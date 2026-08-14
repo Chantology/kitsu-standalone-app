@@ -11,7 +11,6 @@ per-item fetch.
 """
 
 import os
-import tempfile
 from datetime import datetime
 
 from PySide6.QtCore import Qt
@@ -19,6 +18,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from .async_worker import run_async
+from .kitsu_core import media_cache
 from .status_colors import status_display_color
 
 _THUMBNAIL_SIZE = 40
@@ -95,8 +95,7 @@ class _NewsRow(QWidget):
             )
 
     def _load_image(self, download_fn, cache_name, target_label, size):
-        cache_dir = os.path.join(tempfile.gettempdir(), "kitsu_standalone_news")
-        os.makedirs(cache_dir, exist_ok=True)
+        cache_dir = media_cache.ensure_directory(media_cache.NEWS)
         target_path = os.path.join(cache_dir, cache_name)
 
         if os.path.exists(target_path):

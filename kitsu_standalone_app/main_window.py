@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from . import __version__, theme
 from .comment_panel import CommentPanel
-from .kitsu_core import credentials
+from .kitsu_core import credentials, media_cache
 from .news_feed_widget import NewsFeedWidget
 from .task_list_widget import TaskListWidget
 
@@ -112,6 +112,10 @@ class MainWindow(QMainWindow):
         connection = credentials.load_connection()
         if connection.server_url and connection.email:
             credentials.clear_refresh_token(connection.server_url, connection.email)
+        # Logging out is the point at which someone is done with this
+        # production's media, so the downloaded previews/movies/frame strips go
+        # with the saved login rather than lingering in the temp directory.
+        media_cache.clear_all()
         self.shutdown()
         self.logged_out.emit()
 

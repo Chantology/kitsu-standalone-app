@@ -1,0 +1,7 @@
+.venv/
+build/pyinstaller_work/
+KitsuApp/
+dist/
+__pycache__/
+*.pyc
+*.egg-info/

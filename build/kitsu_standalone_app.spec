@@ -34,10 +34,51 @@ a = Analysis(
     hiddenimports=["keyring.backends", "av"],
     hookspath=[],
     runtime_hooks=[],
-    excludes=[],
+    # This is a pure QtWidgets app: it imports QtCore/QtGui/QtWidgets and
+    # nothing else (checked against the source). PySide6's hook otherwise
+    # collects QML, Quick, Pdf, OpenGL and Network anyway, which is ~23 MB of
+    # DLLs that are never loaded. QtNetwork is worth naming specially — it is
+    # what drags in Qt's own OpenSSL build (libcrypto/libssl-3-x64.dll). The
+    # app's HTTPS goes through requests/gazu, i.e. Python's _ssl and its
+    # separate libcrypto-3.dll, which stays.
+    excludes=[
+        "PySide6.QtNetwork",
+        "PySide6.QtOpenGL",
+        "PySide6.QtOpenGLWidgets",
+        "PySide6.QtPdf",
+        "PySide6.QtPdfWidgets",
+        "PySide6.QtQml",
+        "PySide6.QtQuick",
+        "PySide6.QtQuickWidgets",
+    ],
     cipher=block_cipher,
     noarchive=False,
 )
+# Naming a module in `excludes` keeps its Python binding out, but PyInstaller
+# still copies the Qt DLLs themselves when another collected module merely sits
+# next to them — so they are dropped here by name as well. Nothing in this list
+# is a load-time dependency of Qt6Core/Gui/Widgets: if that were wrong the app
+# would fail to start outright, which is exactly what the post-build smoke test
+# checks.
+_UNUSED_BINARIES = (
+    "qt6qml",
+    "qt6quick",
+    "qt6pdf",
+    "qt6opengl",
+    "qt6network",
+    "libcrypto-3-x64.dll",
+    "libssl-3-x64.dll",
+)
+
+
+def _is_unused(entry):
+    name = entry[0].rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lower()
+    return any(name.startswith(prefix) or name == prefix for prefix in _UNUSED_BINARIES)
+
+
+a.binaries = TOC([entry for entry in a.binaries if not _is_unused(entry)])
+a.datas = TOC([entry for entry in a.datas if not _is_unused(entry)])
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(

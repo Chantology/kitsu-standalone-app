@@ -39,6 +39,19 @@ def apply_theme(app, theme):
     save_theme(theme)
 
 
+def status_color(widget, is_error):
+    """Status-line text color that stays readable on `widget`'s background.
+
+    The dark #0b7a0b/#b00020 read well on the light theme but nearly vanish
+    on the dark one (~1.8:1 contrast), so dark backgrounds get light
+    variants (~7.5:1 on the dark palette below) instead.
+    """
+    dark_background = widget.palette().color(QPalette.ColorRole.Window).lightness() < 128
+    if is_error:
+        return "#ff9999" if dark_background else "#b00020"
+    return "#81c784" if dark_background else "#0b7a0b"
+
+
 def _light_palette():
     # Fusion's own built-in light palette — not hand-tuned, but a safe,
     # well-tested baseline to contrast the dark one against.

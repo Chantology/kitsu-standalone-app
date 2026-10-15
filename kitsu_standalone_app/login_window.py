@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .async_worker import run_async
 from .kitsu_core import credentials
 from .kitsu_core import session as session_module
@@ -141,8 +142,7 @@ class LoginWindow(QWidget):
 
     def _set_status(self, message, is_error=False):
         self.status_label.setText(message)
-        color = "#b00020" if is_error else "#0b7a0b"
-        self.status_label.setStyleSheet(f"color: {color};")
+        self.status_label.setStyleSheet(f"color: {theme.status_color(self, is_error)};")
 
     # ---- two-factor ----
 

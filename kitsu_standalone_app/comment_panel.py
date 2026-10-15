@@ -24,7 +24,7 @@ reloads whenever that selection changes.
 
 import os
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import frame_picker, media_types, movie_frames, paint_over_dialog, url_attachment
+from . import frame_picker, media_types, movie_frames, paint_over_dialog, theme, url_attachment
 from .async_worker import run_async
 from .comment_composer import MODE_REVISION, CommentComposer
 from .kitsu_core import annotations, drafts, media_cache, project_tasks
@@ -343,8 +343,16 @@ class CommentPanel(QWidget):
 
     def _set_status(self, message, is_error=False):
         self.status_label.setText(message)
-        color = "#b00020" if is_error else "#0b7a0b"
-        self.status_label.setStyleSheet(f"color: {color};")
+        self._status_is_error = is_error
+        self.status_label.setStyleSheet(f"color: {theme.status_color(self, is_error)};")
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        # The hamburger menu's "Light Theme" toggle swaps the app palette
+        # while a status message may still be showing in its old-theme color.
+        is_error = getattr(self, "_status_is_error", None)
+        if event.type() == QEvent.Type.PaletteChange and is_error is not None:
+            self.status_label.setStyleSheet(f"color: {theme.status_color(self, is_error)};")
 
     def _section_label(self, text):
         label = QLabel(text)
